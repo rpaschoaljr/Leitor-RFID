@@ -32,17 +32,30 @@ async function listPorts() {
   const ports = await SerialPort.list();
   console.log('Portas disponíveis:', ports);
   
-  // Tenta encontrar uma porta que pareça ser o Arduino (Arduino, CH340, etc)
-  const arduino = ports.find(p => 
-    p.manufacturer?.includes('Arduino') || 
-    p.friendlyName?.includes('Arduino') ||
-    p.vendorId === '1a86' // Vendor ID comum para CH340 (clones arduino)
-  );
+  // IDs de Fabricantes Comuns (Original e Clones)
+  const commonVIDs = [
+    '1a86', // CH340/CH341 (Clones Chineses Populares)
+    '10c4', // Silicon Labs CP210x
+    '0403', // FTDI
+    '2341', // Arduino SA (Originais)
+    '2a03', // dog hunter AG (Originais)
+    '16d0'  // MCS (Alguns modelos Pro Micro)
+  ];
+
+  const arduino = ports.find(p => {
+    const vid = p.vendorId?.toLowerCase();
+    const manufacturer = p.manufacturer?.toLowerCase() || '';
+    const friendlyName = p.friendlyName?.toLowerCase() || '';
+
+    return commonVIDs.includes(vid) || 
+           manufacturer.includes('arduino') || 
+           friendlyName.includes('arduino');
+  });
 
   if (arduino) {
     connectToArduino(arduino.path);
   } else {
-    console.log('Arduino não encontrado. Verifique a conexão.');
+    console.log('Arduino não encontrado. Verifique a conexão USB.');
   }
 }
 
