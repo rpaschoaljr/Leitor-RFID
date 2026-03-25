@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RFID Analyzer Pro</title>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+    <div id="overlay">
+        <div id="percentText">0%</div>
+        <div class="progress-container">
+            <div id="progressBar"></div>
+        </div>
+        <div class="warning-text">Processando Tag...</div>
+        <p style="color: #888; margin-top: 10px;">Não remova o cartão do leitor</p>
+    </div>
+
+    <div class="container">
+        <h1>RFID Analyzer Pro</h1>
+        
+        <div class="tabs">
+            <div class="tab active" data-target="tab-geral">Geral</div>
+            <div class="tab" data-target="tab-autopsia">Autópsia</div>
+        </div>
+
+        <!-- Aba Geral -->
+        <div id="tab-geral" class="tab-content active">
+            <div class="info-section">
+                <div id="type" style="color: var(--accent-color); font-size: 0.9em; margin-bottom: 5px;">Tipo: ---</div>
+                <div id="sectors" style="color: var(--warning-color); font-size: 0.9em; margin-bottom: 5px;">Setores: ---</div>
+                <div id="uid">Aguardando Tag...</div>
+                <div id="data">Conteúdo: ---</div>
+            </div>
+            <hr>
+            <h3>Gerenciar Memória</h3>
+            <input type="text" id="gravarInput" placeholder="Digite o texto para gravar...">
+            <div class="button-group">
+                <button id="btnGravar">Gravar</button>
+                <button id="btnLimpar">Limpar</button>
+            </div>
+        </div>
+
+        <!-- Aba Autópsia -->
+        <div id="tab-autopsia" class="tab-content">
+            <div id="autopsyInfo" style="margin-bottom: 10px; font-size: 0.9em; color: var(--text-secondary);">
+                Aguardando início do scan profundo...
+            </div>
+            <button id="btnScan">⚡ Iniciar Scan Profundo</button>
+            
+            <div id="scanTableContainer">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Bloco</th>
+                            <th>Hexadecimal (Data)</th>
+                            <th>ASCII</th>
+                        </tr>
+                    </thead>
+                    <tbody id="scanTableBody"></tbody>
+                </table>
+            </div>
+        </div>
+
+        <div id="status" class="status">Status: Pronto</div>
+    </div>
+    <script src="js/renderer.js"></script>
+</body>
+</html>
