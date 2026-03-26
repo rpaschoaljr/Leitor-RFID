@@ -113,6 +113,7 @@ btnGravar.addEventListener('click', () => {
     const texto = gravarInput.value.trim();
     if (texto.length > 0) {
         gravando = true;
+        dataDisplay.innerText = 'Conteúdo: Atualizando...'; // Feedback visual
         mostrarOverlay('Gravando Dados...');
         window.electronAPI.gravarTag(texto);
     }
@@ -120,6 +121,7 @@ btnGravar.addEventListener('click', () => {
 
 btnLimpar.addEventListener('click', () => {
     gravando = true;
+    dataDisplay.innerText = 'Conteúdo: Limpando...'; // Feedback visual
     mostrarOverlay('Limpando Memória...');
     window.electronAPI.gravarTag(""); 
 });

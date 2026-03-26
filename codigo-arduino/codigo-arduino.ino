@@ -49,17 +49,35 @@ void loop() {
       comandoPendente = input.substring(7);
       modoGravacao = true;
       modoScan = false;
+      lastActionTime = 0; // Ignora cooldown para responder ao clique
       Serial.println("LOG:OPERACAO_GRAVACAO_INICIADA");
     } else if (input == "SCAN") {
       modoScan = true;
       modoGravacao = false;
+      lastActionTime = 0; // Ignora cooldown para responder ao clique
+      Serial.println("LOG:SCAN_SOLICITADO");
     }
   }
 
   switch (estadoAtual) {
     case ST_IDLE:
-      if (millis() - lastActionTime > COOLDOWN_MS) {
-        if (mfrc522.PICC_IsNewCardPresent() && mfrc522.PICC_ReadCardSerial()) {
+      if (millis() - lastActionTime > COOLDOWN_MS || modoScan || modoGravacao) {
+        bool cartaoEncontrado = false;
+        
+        // 1. Tenta detecção padrão (REQA)
+        if (mfrc522.PICC_IsNewCardPresent()) {
+          cartaoEncontrado = true;
+        } 
+        // 2. Se falhou mas o usuário pediu algo, tenta Wakeup (WUPA) para tags já presentes
+        else if (modoScan || modoGravacao) {
+          byte bufferATQA[2];
+          byte bufferSize = sizeof(bufferATQA);
+          if (mfrc522.PICC_WakeupA(bufferATQA, &bufferSize) == MFRC522::STATUS_OK) {
+            cartaoEncontrado = true;
+          }
+        }
+
+        if (cartaoEncontrado && mfrc522.PICC_ReadCardSerial()) {
           estadoAtual = ST_CARD_DETECTED;
         }
       }
@@ -105,7 +123,6 @@ void loop() {
 
     case ST_READING_BLOCKS:
       {
-        // Lê até o bloco 20 ou fim da tag para o resumo (aprox 300 chars)
         byte limiteLeitura = (blocoMaxScan < 20) ? blocoMaxScan : 20;
         if (blocoAtual > limiteLeitura) { 
           Serial.print("DATA:"); Serial.println(dadosLidosBuffer);
@@ -119,7 +136,6 @@ void loop() {
 
     case ST_WRITING_BLOCKS:
       {
-        // 1. Calcular o bloco necessário para cobrir todo o texto
         int count = 0;
         byte ultimoBlocoTexto = 1;
         for(byte b = 1; b <= blocoMaxScan; b++) {
@@ -130,9 +146,8 @@ void loop() {
           }
         }
 
-        // 2. Definir limite de escrita (Texto completo OU limpeza mínima de 10 blocos)
         byte limiteEscrita;
-        if (comandoPendente == "") limiteEscrita = blocoMaxScan; // Limpeza total
+        if (comandoPendente == "") limiteEscrita = blocoMaxScan;
         else limiteEscrita = (ultimoBlocoTexto > 10) ? ultimoBlocoTexto : 10;
         
         if (limiteEscrita > blocoMaxScan) limiteEscrita = blocoMaxScan;
@@ -141,7 +156,11 @@ void loop() {
           Serial.println("STATUS:SUCESSO");
           comandoPendente = "";
           modoGravacao = false;
-          estadoAtual = ST_FINISHING;
+          
+          // Prepara para re-ler o conteúdo e atualizar o resumo na interface
+          blocoAtual = BLOCO_INICIAL;
+          dadosLidosBuffer = "";
+          estadoAtual = ST_READING_BLOCKS; 
         } else {
           if (ehBlocoUtil(blocoAtual)) processarEscritaBloco();
           blocoAtual++;
