@@ -5,11 +5,12 @@ const { ReadlineParser } = require('@serialport/parser-readline');
 
 let mainWindow;
 let arduinoPort;
+let isConnecting = false;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
+    width: 900,
+    height: 700,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -18,51 +19,59 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'src/index.html'));
-  // mainWindow.webContents.openDevTools(); // Útil para depuração
+  // mainWindow.webContents.openDevTools();
 }
 
 app.whenReady().then(() => {
   createWindow();
-
-  // Listar portas seriais disponíveis e tentar conectar (exemplo simplificado)
   listPorts();
+  
+  // Tenta reconectar a cada 5 segundos se não houver porta aberta
+  setInterval(() => {
+    if (!arduinoPort || !arduinoPort.isOpen) {
+      if (!isConnecting) listPorts();
+    }
+  }, 5000);
 });
 
 async function listPorts() {
-  const ports = await SerialPort.list();
-  console.log('Portas disponíveis:', ports);
-  
-  // IDs de Fabricantes Comuns (Original e Clones)
-  const commonVIDs = [
-    '1a86', // CH340/CH341 (Clones Chineses Populares)
-    '10c4', // Silicon Labs CP210x
-    '0403', // FTDI
-    '2341', // Arduino SA (Originais)
-    '2a03', // dog hunter AG (Originais)
-    '16d0'  // MCS (Alguns modelos Pro Micro)
-  ];
+  isConnecting = true;
+  try {
+    const ports = await SerialPort.list();
+    
+    const commonVIDs = ['1a86', '10c4', '0403', '2341', '2a03', '16d0'];
 
-  const arduino = ports.find(p => {
-    const vid = p.vendorId?.toLowerCase();
-    const manufacturer = p.manufacturer?.toLowerCase() || '';
-    const friendlyName = p.friendlyName?.toLowerCase() || '';
+    const arduino = ports.find(p => {
+      const vid = p.vendorId?.toLowerCase();
+      const manufacturer = p.manufacturer?.toLowerCase() || '';
+      const friendlyName = p.friendlyName?.toLowerCase() || '';
+      return commonVIDs.includes(vid) || manufacturer.includes('arduino') || friendlyName.includes('arduino');
+    });
 
-    return commonVIDs.includes(vid) || 
-           manufacturer.includes('arduino') || 
-           friendlyName.includes('arduino');
-  });
+    if (arduino) {
+      connectToArduino(arduino.path);
+    } else {
+      sendStatus('DESCONECTADO');
+    }
+  } catch (err) {
+    console.error('Erro ao listar portas:', err);
+  } finally {
+    isConnecting = false;
+  }
+}
 
-  if (arduino) {
-    connectToArduino(arduino.path);
-  } else {
-    console.log('Arduino não encontrado. Verifique a conexão USB.');
+function sendStatus(status) {
+  if (mainWindow) {
+    mainWindow.webContents.send('connection-status', status);
   }
 }
 
 function connectToArduino(portPath) {
+  if (arduinoPort && arduinoPort.isOpen) return;
+
   arduinoPort = new SerialPort({
     path: portPath,
-    baudRate: 9600,
+    baudRate: 115200, // Aumentado para melhor performance
     autoOpen: true
   });
 
@@ -70,37 +79,43 @@ function connectToArduino(portPath) {
 
   arduinoPort.on('open', () => {
     console.log('Conectado ao Arduino na porta:', portPath);
+    sendStatus('CONECTADO');
   });
 
   parser.on('data', (data) => {
-    console.log('Dados do Arduino:', data);
-    // Enviar dados para o Renderer
     if (mainWindow) {
       mainWindow.webContents.send('arduino-data', data);
     }
   });
 
+  arduinoPort.on('close', () => {
+    console.log('Porta fechada.');
+    sendStatus('DESCONECTADO');
+  });
+
   arduinoPort.on('error', (err) => {
     console.error('Erro na serial:', err.message);
+    sendStatus('ERRO');
   });
 }
 
 ipcMain.on('iniciar-scan', (event) => {
   if (arduinoPort && arduinoPort.isOpen) {
     arduinoPort.write("SCAN\n");
-    console.log('>>> ENVIANDO SCAN PARA ARDUINO');
   }
 });
 
-// Receber comando de gravação do Renderer
 ipcMain.on('gravar-tag', (event, texto) => {
   if (arduinoPort && arduinoPort.isOpen) {
     const comandoBruto = `GRAVAR:${texto}\n`;
     arduinoPort.write(comandoBruto);
-    console.log('>>> ENVIANDO PARA ARDUINO:', JSON.stringify(comandoBruto));
   } else {
-    console.error('ERRO: Arduino não conectado ou porta fechada.');
+    sendStatus('DESCONECTADO');
   }
+});
+
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('window-all-closed', () => {

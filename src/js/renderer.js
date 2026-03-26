@@ -13,6 +13,7 @@ const overlay = document.getElementById('overlay');
 const progressBar = document.getElementById('progressBar');
 const percentText = document.getElementById('percentText');
 const warningText = document.querySelector('.warning-text');
+const connStatus = document.getElementById('connStatus');
 
 let gravando = false;
 let totalBlocks = 64; // Fallback
@@ -24,6 +25,23 @@ const COLORS = {
     warning: '#ffb74d',
     normal: '#b0b0b0'
 };
+
+// Listener de Status de Conexão
+window.electronAPI.onConnectionStatus((status) => {
+    console.log('Status de conexão:', status);
+    if (status === 'CONECTADO') {
+        connStatus.innerText = '● Conectado';
+        connStatus.classList.remove('disconnected');
+        connStatus.classList.add('connected');
+        statusDisplay.innerText = 'Pronto para leitura';
+    } else {
+        connStatus.innerText = '● Desconectado';
+        connStatus.classList.remove('connected');
+        connStatus.classList.add('disconnected');
+        statusDisplay.innerText = 'Arduino não encontrado';
+        statusDisplay.style.color = COLORS.error;
+    }
+});
 
 function mostrarOverlay(texto) {
     warningText.innerText = texto;

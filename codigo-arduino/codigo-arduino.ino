@@ -27,8 +27,10 @@ const byte BLOCO_INICIAL = 0;
 unsigned long lastActionTime = 0;
 const int COOLDOWN_MS = 1000;
 
+String inputBuffer = "";
+
 void setup() {
-  Serial.begin(9600);
+  Serial.begin(115200);
   SPI.begin();
   mfrc522.PCD_Init();
   for (byte i = 0; i < 6; i++) key.keyByte[i] = 0xFF;
@@ -42,20 +44,25 @@ bool ehBlocoUtil(byte b) {
 }
 
 void loop() {
-  if (Serial.available() > 0) {
-    String input = Serial.readStringUntil('\n');
-    input.trim();
-    if (input.startsWith("GRAVAR:")) {
-      comandoPendente = input.substring(7);
-      modoGravacao = true;
-      modoScan = false;
-      lastActionTime = 0; // Ignora cooldown para responder ao clique
-      Serial.println("LOG:OPERACAO_GRAVACAO_INICIADA");
-    } else if (input == "SCAN") {
-      modoScan = true;
-      modoGravacao = false;
-      lastActionTime = 0; // Ignora cooldown para responder ao clique
-      Serial.println("LOG:SCAN_SOLICITADO");
+  while (Serial.available() > 0) {
+    char c = Serial.read();
+    if (c == '\n') {
+      inputBuffer.trim();
+      if (inputBuffer.startsWith("GRAVAR:")) {
+        comandoPendente = inputBuffer.substring(7);
+        modoGravacao = true;
+        modoScan = false;
+        lastActionTime = 0;
+        Serial.println("LOG:OPERACAO_GRAVACAO_INICIADA");
+      } else if (inputBuffer == "SCAN") {
+        modoScan = true;
+        modoGravacao = false;
+        lastActionTime = 0;
+        Serial.println("LOG:SCAN_SOLICITADO");
+      }
+      inputBuffer = "";
+    } else {
+      inputBuffer += c;
     }
   }
 
@@ -173,6 +180,7 @@ void loop() {
       mfrc522.PCD_StopCrypto1();
       lastActionTime = millis();
       estadoAtual = ST_IDLE;
+      blocoAtual = 0; // Reset para o próximo ciclo
       break;
   }
 }
