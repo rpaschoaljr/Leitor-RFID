@@ -19,8 +19,8 @@ const connStatus = document.getElementById('connStatus');
 let gravando = false;
 let totalBlocks = 64; 
 let operacaoAtiva = false;
-let timeoutInatividade;
-let ultimoSinalDeVida = Date.now();
+let ultimoSinalDeVida = Date.now();      // Watchdog de Sistema (HEARTBEAT)
+let ultimoProgressoOperacao = Date.now(); // Watchdog de Operação (Progresso Real)
 
 const COLORS = {
     success: '#28a745',
@@ -29,29 +29,32 @@ const COLORS = {
     normal: '#b0b0b0'
 };
 
-// Monitor global de batimento cardíaco (Heartbeat)
+// MONITOR GLOBAL (Watchdog Duplo)
 setInterval(() => {
     const agora = Date.now();
-    const diff = agora - ultimoSinalDeVida;
+    const silencioSistema = agora - ultimoSinalDeVida;
+    const silencioOperacao = agora - ultimoProgressoOperacao;
     
-    if (diff > 3000) { // Se não houver sinal por 3 segundos
+    // 1. WATCHDOG DE SISTEMA (Saúde do Hardware)
+    if (silencioSistema > 3000) {
         connStatus.style.color = COLORS.error;
         connStatus.innerText = '● Sem Resposta';
-    } else if (diff <= 3000 && connStatus.innerText === '● Sem Resposta') {
+    } else if (silencioSistema <= 3000 && connStatus.innerText === '● Sem Resposta') {
         connStatus.style.color = COLORS.success;
         connStatus.innerText = '● Conectado';
     }
 
-    if (diff > 6000) { // Novo: Se passar de 6 segundos, reseta a porta USB
-        console.warn('Watchdog Crítico: 6s sem batimento. Resetando conexão USB...');
-        ultimoSinalDeVida = Date.now(); // Reseta para evitar loops infinitos
+    if (silencioSistema > 6000) {
+        console.warn('Watchdog Sistema: 6s sem batimento. Resetando conexão USB...');
+        ultimoSinalDeVida = agora; 
         window.electronAPI.resetarPorta();
-        statusDisplay.innerText = '♻️ Reconectando USB por inatividade...';
+        statusDisplay.innerText = '♻️ Reconectando USB...';
     }
 
-    if (operacaoAtiva && diff > 5000) { // Watchdog de 5s durante operação
-        console.warn('Watchdog: Arduino travou durante operação.');
-        statusDisplay.innerText = '⚠️ Erro Crítico: Conexão Perdida com Arduino';
+    // 2. WATCHDOG DE OPERAÇÃO (Saúde da Tarefa)
+    if (operacaoAtiva && silencioOperacao > 5000) {
+        console.warn('Watchdog Operação: Sem progresso real por 5s.');
+        statusDisplay.innerText = '⚠️ Nenhuma Tag detectada ou erro na operação';
         statusDisplay.style.color = COLORS.error;
         window.electronAPI.cancelarOperacao();
         esconderOverlay();
@@ -79,6 +82,7 @@ window.electronAPI.onConnectionStatus((status) => {
 
 function mostrarOverlay(texto) {
     operacaoAtiva = true;
+    ultimoProgressoOperacao = Date.now(); // Reseta o timer de operação ao abrir a tela
     warningText.innerText = texto;
     progressBar.style.width = '0%';
     percentText.innerText = '0%';
@@ -105,9 +109,16 @@ document.querySelectorAll('.tab').forEach(tab => {
 });
 
 window.electronAPI.onArduinoData((data) => {
-    ultimoSinalDeVida = Date.now(); // Qualquer dado recebido reseta o cronômetro de vida
+    // Reseta o sinal de vida do SISTEMA para qualquer dado recebido
+    ultimoSinalDeVida = Date.now();
 
-    if (data === 'LOG:HEARTBEAT') return; // Não processa log de batimento na interface
+    // Reseta o sinal de OPERAÇÃO apenas se não for batimento cardíaco
+    const ehHeartbeat = (data === 'LOG:HEARTBEAT');
+    if (!ehHeartbeat) {
+        ultimoProgressoOperacao = Date.now();
+    } else {
+        return; // Ignora HEARTBEAT no processamento de interface
+    }
 
     console.log('Dados recebidos:', data);
 
@@ -145,6 +156,10 @@ window.electronAPI.onArduinoData((data) => {
         statusDisplay.innerText = status === 'SUCESSO' ? '✅ Operação Concluída!' : `❌ Erro: ${status}`;
         statusDisplay.style.color = status === 'SUCESSO' ? COLORS.success : COLORS.error;
         if (status === 'SUCESSO') gravarInput.value = '';
+    } else if (data.startsWith('ERROR:')) {
+        esconderOverlay();
+        statusDisplay.innerText = `❌ Erro: ${data.split(':')[1]}`;
+        statusDisplay.style.color = COLORS.error;
     }
 });
 
