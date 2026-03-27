@@ -19,8 +19,6 @@ const connStatus = document.getElementById('connStatus');
 let gravando = false;
 let totalBlocks = 64; 
 let operacaoAtiva = false;
-let ultimoSinalDeVida = Date.now();      // Watchdog de Sistema (HEARTBEAT)
-let ultimoProgressoOperacao = Date.now(); // Watchdog de Operação (Progresso Real)
 
 const COLORS = {
     success: '#28a745',
@@ -29,49 +27,22 @@ const COLORS = {
     normal: '#b0b0b0'
 };
 
-// MONITOR GLOBAL (Watchdog Duplo)
-setInterval(() => {
-    const agora = Date.now();
-    const silencioSistema = agora - ultimoSinalDeVida;
-    const silencioOperacao = agora - ultimoProgressoOperacao;
-    
-    // 1. WATCHDOG DE SISTEMA (Saúde do Hardware)
-    if (silencioSistema > 3000) {
-        connStatus.style.color = COLORS.error;
-        connStatus.innerText = '● Sem Resposta';
-    } else if (silencioSistema <= 3000 && connStatus.innerText === '● Sem Resposta') {
-        connStatus.style.color = COLORS.success;
-        connStatus.innerText = '● Conectado';
-    }
-
-    if (silencioSistema > 6000) {
-        console.warn('Watchdog Sistema: 6s sem batimento. Resetando conexão USB...');
-        ultimoSinalDeVida = agora; 
-        window.electronAPI.resetarPorta();
-        statusDisplay.innerText = '♻️ Reconectando USB...';
-    }
-
-    // 2. WATCHDOG DE OPERAÇÃO (Saúde da Tarefa)
-    if (operacaoAtiva && silencioOperacao > 5000) {
-        console.warn('Watchdog Operação: Sem progresso real por 5s.');
-        statusDisplay.innerText = '⚠️ Nenhuma Tag detectada ou erro na operação';
-        statusDisplay.style.color = COLORS.error;
-        window.electronAPI.cancelarOperacao();
-        esconderOverlay();
-    }
-}, 1000);
+function resetarLabelsInterface() {
+    uidDisplay.innerText = 'Aguardando Tag...';
+    dataDisplay.innerText = 'Conteúdo: ---';
+    typeDisplay.innerText = 'Tipo: ---';
+    sectorsDisplay.innerText = 'Setores: ---';
+    autopsyInfo.innerText = 'Aguardando início do scan profundo...';
+}
 
 window.electronAPI.onConnectionStatus((status) => {
     if (status === 'CONECTADO') {
         connStatus.innerText = '● Conectado';
-        connStatus.style.color = COLORS.success;
         connStatus.classList.remove('disconnected');
         connStatus.classList.add('connected');
         statusDisplay.innerText = 'Pronto para leitura';
-        ultimoSinalDeVida = Date.now();
     } else {
         connStatus.innerText = '● Desconectado';
-        connStatus.style.color = COLORS.error;
         connStatus.classList.remove('connected');
         connStatus.classList.add('disconnected');
         statusDisplay.innerText = 'Arduino não encontrado';
@@ -82,7 +53,6 @@ window.electronAPI.onConnectionStatus((status) => {
 
 function mostrarOverlay(texto) {
     operacaoAtiva = true;
-    ultimoProgressoOperacao = Date.now(); // Reseta o timer de operação ao abrir a tela
     warningText.innerText = texto;
     progressBar.style.width = '0%';
     percentText.innerText = '0%';
@@ -109,20 +79,10 @@ document.querySelectorAll('.tab').forEach(tab => {
 });
 
 window.electronAPI.onArduinoData((data) => {
-    // Reseta o sinal de vida do SISTEMA para qualquer dado recebido
-    ultimoSinalDeVida = Date.now();
-
-    // Reseta o sinal de OPERAÇÃO apenas se não for batimento cardíaco
-    const ehHeartbeat = (data === 'LOG:HEARTBEAT');
-    if (!ehHeartbeat) {
-        ultimoProgressoOperacao = Date.now();
-    } else {
-        return; // Ignora HEARTBEAT no processamento de interface
-    }
-
     console.log('Dados recebidos:', data);
 
     if (data.includes('OPERACAO_CANCELADA')) {
+        resetarLabelsInterface();
         esconderOverlay();
         statusDisplay.innerText = '⚠️ Operação Cancelada';
         statusDisplay.style.color = COLORS.warning;
@@ -156,10 +116,6 @@ window.electronAPI.onArduinoData((data) => {
         statusDisplay.innerText = status === 'SUCESSO' ? '✅ Operação Concluída!' : `❌ Erro: ${status}`;
         statusDisplay.style.color = status === 'SUCESSO' ? COLORS.success : COLORS.error;
         if (status === 'SUCESSO') gravarInput.value = '';
-    } else if (data.startsWith('ERROR:')) {
-        esconderOverlay();
-        statusDisplay.innerText = `❌ Erro: ${data.split(':')[1]}`;
-        statusDisplay.style.color = COLORS.error;
     }
 });
 
@@ -187,6 +143,7 @@ function processarLinhaScan(linha) {
 
 btnCancelar.addEventListener('click', () => {
     window.electronAPI.cancelarOperacao();
+    resetarLabelsInterface();
     esconderOverlay();
     statusDisplay.innerText = 'Operação interrompida pelo usuário';
     statusDisplay.style.color = COLORS.warning;

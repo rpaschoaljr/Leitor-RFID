@@ -23,9 +23,9 @@ bool modoScan = false;
 String dadosLidosBuffer = "";
 byte blocoAtual = 0;
 byte blocoMaxScan = 63;
+byte setorAutenticado = 255; 
 const byte BLOCO_INICIAL = 0;
 unsigned long lastActionTime = 0;
-unsigned long lastHeartbeatTime = 0;
 const int COOLDOWN_MS = 1000;
 
 void setup() {
@@ -43,20 +43,20 @@ bool ehBlocoUtil(byte b) {
 }
 
 bool prepararBloco(byte bloco) {
+  byte setorNecessario = bloco / 4;
+  if (setorAutenticado == setorNecessario) return true;
+
+  mfrc522.PCD_StopCrypto1();
   MFRC522::StatusCode status = mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, bloco, &key, &(mfrc522.uid));
-  if (status == MFRC522::STATUS_OK) return true;
-  
-  // Se falhar a autenticação, avisamos o erro e encerramos a operação
-  Serial.print("ERROR:AUTH_FAILED_BLOCK_"); Serial.println(bloco);
+  if (status == MFRC522::STATUS_OK) {
+    setorAutenticado = setorNecessario;
+    return true;
+  }
+  setorAutenticado = 255;
   return false;
 }
 
 void loop() {
-  if (millis() - lastHeartbeatTime >= 1000) {
-    Serial.println("LOG:HEARTBEAT");
-    lastHeartbeatTime = millis();
-  }
-
   if (Serial.available() > 0) {
     String input = Serial.readStringUntil('\n');
     input.trim();
@@ -90,7 +90,10 @@ void loop() {
           byte bufferSize = sizeof(bufferATQA);
           if (mfrc522.PICC_WakeupA(bufferATQA, &bufferSize) == MFRC522::STATUS_OK) cartaoEncontrado = true;
         }
-        if (cartaoEncontrado && mfrc522.PICC_ReadCardSerial()) estadoAtual = ST_CARD_DETECTED;
+        if (cartaoEncontrado && mfrc522.PICC_ReadCardSerial()) {
+           estadoAtual = ST_CARD_DETECTED;
+           setorAutenticado = 255;
+        }
       }
       break;
 
@@ -98,24 +101,20 @@ void loop() {
       {
         MFRC522::PICC_Type piccType = mfrc522.PICC_GetType(mfrc522.uid.sak);
         Serial.print("TYPE:"); Serial.println(mfrc522.PICC_GetTypeName(piccType));
-        
-        // Detecção inicial baseada no tipo, mas com fallback alto para "Universal"
         if (piccType == MFRC522::PICC_TYPE_MIFARE_1K) blocoMaxScan = 63;
         else if (piccType == MFRC522::PICC_TYPE_MIFARE_4K) blocoMaxScan = 255;
         else if (piccType == MFRC522::PICC_TYPE_MIFARE_UL) blocoMaxScan = 15;
-        else blocoMaxScan = 255; // Fallback alto para tags genéricas (o erro de leitura parará o loop)
+        else blocoMaxScan = 63;
 
-        Serial.print("BLOCKS_EXPECTED:"); Serial.println(blocoMaxScan + 1);
+        Serial.print("BLOCKS:"); Serial.println(blocoMaxScan + 1);
         Serial.print("UID:");
         for (byte i = 0; i < mfrc522.uid.size; i++) {
           Serial.print(mfrc522.uid.uidByte[i] < 0x10 ? "0" : "");
           Serial.print(mfrc522.uid.uidByte[i], HEX);
         }
         Serial.println();
-        
         blocoAtual = BLOCO_INICIAL;
         dadosLidosBuffer = "";
-        
         if (modoGravacao) estadoAtual = ST_WRITING_BLOCKS;
         else if (modoScan) estadoAtual = ST_SCANNING_FULL;
         else estadoAtual = ST_READING_BLOCKS;
@@ -128,13 +127,8 @@ void loop() {
         modoScan = false;
         estadoAtual = ST_FINISHING;
       } else {
-        if (!executarScanBloco()) { // Se falhar um bloco, encerramos o scan aqui
-           Serial.println("SCAN:FIM_PREMATURO");
-           modoScan = false;
-           estadoAtual = ST_FINISHING;
-        } else {
-           blocoAtual++;
-        }
+        executarScanBloco();
+        blocoAtual++;
       }
       break;
 
@@ -143,15 +137,8 @@ void loop() {
         Serial.print("DATA:"); Serial.println(dadosLidosBuffer);
         estadoAtual = ST_FINISHING;
       } else {
-        bool sucesso = true;
-        if (ehBlocoUtil(blocoAtual)) sucesso = processarLeituraBloco();
-        
-        if (!sucesso) {
-           Serial.print("DATA:"); Serial.println(dadosLidosBuffer);
-           estadoAtual = ST_FINISHING;
-        } else {
-           blocoAtual++;
-        }
+        if (ehBlocoUtil(blocoAtual)) processarLeituraBloco();
+        blocoAtual++;
       }
       break;
 
@@ -177,16 +164,8 @@ void loop() {
           dadosLidosBuffer = "";
           estadoAtual = ST_READING_BLOCKS; 
         } else {
-          bool sucesso = true;
-          if (ehBlocoUtil(blocoAtual)) sucesso = processarEscritaBloco();
-          
-          if (!sucesso) {
-             Serial.println("STATUS:ERRO_ESCRITA");
-             modoGravacao = false;
-             estadoAtual = ST_FINISHING;
-          } else {
-             blocoAtual++;
-          }
+          if (ehBlocoUtil(blocoAtual)) processarEscritaBloco();
+          blocoAtual++;
         }
       }
       break;
@@ -197,12 +176,13 @@ void loop() {
       lastActionTime = millis();
       estadoAtual = ST_IDLE;
       blocoAtual = 0;
+      setorAutenticado = 255;
       break;
   }
 }
 
-bool executarScanBloco() {
-  if (!prepararBloco(blocoAtual)) return false;
+void executarScanBloco() {
+  if (!prepararBloco(blocoAtual)) return;
   byte buffer[18]; byte size = sizeof(buffer);
   if (mfrc522.MIFARE_Read(blocoAtual, buffer, &size) == MFRC522::STATUS_OK) {
     Serial.print("BLOCK:"); Serial.print(blocoAtual); Serial.print(":");
@@ -213,23 +193,19 @@ bool executarScanBloco() {
     Serial.print("|");
     for (byte i = 0; i < 16; i++) Serial.print((buffer[i] >= 32 && buffer[i] <= 126) ? (char)buffer[i] : '.');
     Serial.println();
-    return true;
   }
-  return false;
 }
 
-bool processarLeituraBloco() {
-  if (!prepararBloco(blocoAtual)) return false;
+void processarLeituraBloco() {
+  if (!prepararBloco(blocoAtual)) return;
   byte buffer[18]; byte size = sizeof(buffer);
   if (mfrc522.MIFARE_Read(blocoAtual, buffer, &size) == MFRC522::STATUS_OK) {
     for (byte i = 0; i < 16; i++) if (buffer[i] >= 32 && buffer[i] <= 126) dadosLidosBuffer += (char)buffer[i];
-    return true;
   }
-  return false;
 }
 
-bool processarEscritaBloco() {
-  if (!prepararBloco(blocoAtual)) return false;
+void processarEscritaBloco() {
+  if (!prepararBloco(blocoAtual)) return;
   byte dataBlock[16] = {0}; 
   int progresso = 0;
   for(int b = 1; b < blocoAtual; b++) if(ehBlocoUtil(b)) progresso += 16;
@@ -238,6 +214,5 @@ bool processarEscritaBloco() {
       if (progresso + i < (int)comandoPendente.length()) dataBlock[i] = (byte)comandoPendente[progresso + i];
     }
   }
-  if (mfrc522.MIFARE_Write(blocoAtual, dataBlock, 16) == MFRC522::STATUS_OK) return true;
-  return false;
+  mfrc522.MIFARE_Write(blocoAtual, dataBlock, 16);
 }
