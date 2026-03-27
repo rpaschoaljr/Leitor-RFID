@@ -8,6 +8,7 @@ const gravarInput = document.getElementById('gravarInput');
 const btnGravar = document.getElementById('btnGravar');
 const btnLimpar = document.getElementById('btnLimpar');
 const btnScan = document.getElementById('btnScan');
+const btnCancelar = document.getElementById('btnCancelar');
 const scanTableBody = document.getElementById('scanTableBody');
 const overlay = document.getElementById('overlay');
 const progressBar = document.getElementById('progressBar');
@@ -16,8 +17,10 @@ const warningText = document.querySelector('.warning-text');
 const connStatus = document.getElementById('connStatus');
 
 let gravando = false;
-let totalBlocks = 64; // Fallback
-let currentProgressBlocks = 0;
+let totalBlocks = 64; 
+let operacaoAtiva = false;
+let timeoutInatividade;
+let ultimoSinalDeVida = Date.now();
 
 const COLORS = {
     success: '#28a745',
@@ -26,24 +29,56 @@ const COLORS = {
     normal: '#b0b0b0'
 };
 
-// Listener de Status de Conexão
+// Monitor global de batimento cardíaco (Heartbeat)
+setInterval(() => {
+    const agora = Date.now();
+    const diff = agora - ultimoSinalDeVida;
+    
+    if (diff > 3000) { // Se não houver sinal por 3 segundos
+        connStatus.style.color = COLORS.error;
+        connStatus.innerText = '● Sem Resposta';
+    } else if (diff <= 3000 && connStatus.innerText === '● Sem Resposta') {
+        connStatus.style.color = COLORS.success;
+        connStatus.innerText = '● Conectado';
+    }
+
+    if (diff > 6000) { // Novo: Se passar de 6 segundos, reseta a porta USB
+        console.warn('Watchdog Crítico: 6s sem batimento. Resetando conexão USB...');
+        ultimoSinalDeVida = Date.now(); // Reseta para evitar loops infinitos
+        window.electronAPI.resetarPorta();
+        statusDisplay.innerText = '♻️ Reconectando USB por inatividade...';
+    }
+
+    if (operacaoAtiva && diff > 5000) { // Watchdog de 5s durante operação
+        console.warn('Watchdog: Arduino travou durante operação.');
+        statusDisplay.innerText = '⚠️ Erro Crítico: Conexão Perdida com Arduino';
+        statusDisplay.style.color = COLORS.error;
+        window.electronAPI.cancelarOperacao();
+        esconderOverlay();
+    }
+}, 1000);
+
 window.electronAPI.onConnectionStatus((status) => {
-    console.log('Status de conexão:', status);
     if (status === 'CONECTADO') {
         connStatus.innerText = '● Conectado';
+        connStatus.style.color = COLORS.success;
         connStatus.classList.remove('disconnected');
         connStatus.classList.add('connected');
         statusDisplay.innerText = 'Pronto para leitura';
+        ultimoSinalDeVida = Date.now();
     } else {
         connStatus.innerText = '● Desconectado';
+        connStatus.style.color = COLORS.error;
         connStatus.classList.remove('connected');
         connStatus.classList.add('disconnected');
         statusDisplay.innerText = 'Arduino não encontrado';
         statusDisplay.style.color = COLORS.error;
+        if (operacaoAtiva) esconderOverlay();
     }
 });
 
 function mostrarOverlay(texto) {
+    operacaoAtiva = true;
     warningText.innerText = texto;
     progressBar.style.width = '0%';
     percentText.innerText = '0%';
@@ -51,6 +86,7 @@ function mostrarOverlay(texto) {
 }
 
 function esconderOverlay() {
+    operacaoAtiva = false;
     overlay.style.display = 'none';
 }
 
@@ -60,7 +96,6 @@ function atualizarProgresso(atual, total) {
     percentText.innerText = `${p}%`;
 }
 
-// Gerenciamento de Abas
 document.querySelectorAll('.tab').forEach(tab => {
     tab.addEventListener('click', () => {
         document.querySelectorAll('.tab, .tab-content').forEach(el => el.classList.remove('active'));
@@ -69,9 +104,18 @@ document.querySelectorAll('.tab').forEach(tab => {
     });
 });
 
-// Receber dados do Arduino
 window.electronAPI.onArduinoData((data) => {
+    ultimoSinalDeVida = Date.now(); // Qualquer dado recebido reseta o cronômetro de vida
+
+    if (data === 'LOG:HEARTBEAT') return; // Não processa log de batimento na interface
+
     console.log('Dados recebidos:', data);
+
+    if (data.includes('OPERACAO_CANCELADA')) {
+        esconderOverlay();
+        statusDisplay.innerText = '⚠️ Operação Cancelada';
+        statusDisplay.style.color = COLORS.warning;
+    }
 
     if (data.startsWith('TYPE:')) {
         const tipo = data.split(':')[1];
@@ -79,7 +123,7 @@ window.electronAPI.onArduinoData((data) => {
         autopsyInfo.innerText = `Tag detectada: ${tipo}`;
     } else if (data.startsWith('BLOCKS:')) {
         totalBlocks = parseInt(data.split(':')[1]);
-        const numSectors = totalBlocks / 4; // Simplificado para Mifare Classic
+        const numSectors = totalBlocks / 4; 
         sectorsDisplay.innerText = `Setores: ${numSectors}`;
         autopsyInfo.innerText += ` | Blocos: ${totalBlocks} | Setores: ${numSectors}`;
     } else if (data.startsWith('UID:')) {
@@ -98,7 +142,6 @@ window.electronAPI.onArduinoData((data) => {
     } else if (data.startsWith('STATUS:')) {
         esconderOverlay();
         const status = data.split(':')[1];
-        gravando = false;
         statusDisplay.innerText = status === 'SUCESSO' ? '✅ Operação Concluída!' : `❌ Erro: ${status}`;
         statusDisplay.style.color = status === 'SUCESSO' ? COLORS.success : COLORS.error;
         if (status === 'SUCESSO') gravarInput.value = '';
@@ -127,19 +170,24 @@ function processarLinhaScan(linha) {
     container.scrollTop = container.scrollHeight;
 }
 
+btnCancelar.addEventListener('click', () => {
+    window.electronAPI.cancelarOperacao();
+    esconderOverlay();
+    statusDisplay.innerText = 'Operação interrompida pelo usuário';
+    statusDisplay.style.color = COLORS.warning;
+});
+
 btnGravar.addEventListener('click', () => {
     const texto = gravarInput.value.trim();
     if (texto.length > 0) {
-        gravando = true;
-        dataDisplay.innerText = 'Conteúdo: Atualizando...'; // Feedback visual
+        dataDisplay.innerText = 'Conteúdo: Atualizando...'; 
         mostrarOverlay('Gravando Dados...');
         window.electronAPI.gravarTag(texto);
     }
 });
 
 btnLimpar.addEventListener('click', () => {
-    gravando = true;
-    dataDisplay.innerText = 'Conteúdo: Limpando...'; // Feedback visual
+    dataDisplay.innerText = 'Conteúdo: Limpando...'; 
     mostrarOverlay('Limpando Memória...');
     window.electronAPI.gravarTag(""); 
 });

@@ -167,3 +167,25 @@ td { padding: 5px 10px; border-bottom: 1px solid #222; }
 }
 
 .status { margin-top: 20px; padding: 10px; border-radius: 6px; background: rgba(0,0,0,0.2); }
+
+/* Estilo do Botão de Cancelar */
+.btn-cancel {
+    margin-top: 25px;
+    background-color: transparent;
+    border: 1px solid var(--error-color);
+    color: var(--error-color);
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.9em;
+    font-weight: bold;
+    transition: all 0.3s;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+}
+
+.btn-cancel:hover {
+    background-color: var(--error-color);
+    color: white;
+    box-shadow: 0 0 10px var(--error-color);
+}

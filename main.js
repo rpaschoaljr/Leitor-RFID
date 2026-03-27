@@ -19,14 +19,12 @@ function createWindow() {
   });
 
   mainWindow.loadFile(path.join(__dirname, 'src/index.html'));
-  // mainWindow.webContents.openDevTools();
 }
 
 app.whenReady().then(() => {
   createWindow();
   listPorts();
   
-  // Tenta reconectar a cada 5 segundos se não houver porta aberta
   setInterval(() => {
     if (!arduinoPort || !arduinoPort.isOpen) {
       if (!isConnecting) listPorts();
@@ -38,9 +36,7 @@ async function listPorts() {
   isConnecting = true;
   try {
     const ports = await SerialPort.list();
-    
     const commonVIDs = ['1a86', '10c4', '0403', '2341', '2a03', '16d0'];
-
     const arduino = ports.find(p => {
       const vid = p.vendorId?.toLowerCase();
       const manufacturer = p.manufacturer?.toLowerCase() || '';
@@ -48,11 +44,8 @@ async function listPorts() {
       return commonVIDs.includes(vid) || manufacturer.includes('arduino') || friendlyName.includes('arduino');
     });
 
-    if (arduino) {
-      connectToArduino(arduino.path);
-    } else {
-      sendStatus('DESCONECTADO');
-    }
+    if (arduino) connectToArduino(arduino.path);
+    else sendStatus('DESCONECTADO');
   } catch (err) {
     console.error('Erro ao listar portas:', err);
   } finally {
@@ -61,9 +54,7 @@ async function listPorts() {
 }
 
 function sendStatus(status) {
-  if (mainWindow) {
-    mainWindow.webContents.send('connection-status', status);
-  }
+  if (mainWindow) mainWindow.webContents.send('connection-status', status);
 }
 
 function connectToArduino(portPath) {
@@ -83,9 +74,7 @@ function connectToArduino(portPath) {
   });
 
   parser.on('data', (data) => {
-    if (mainWindow) {
-      mainWindow.webContents.send('arduino-data', data);
-    }
+    if (mainWindow) mainWindow.webContents.send('arduino-data', data);
   });
 
   arduinoPort.on('close', () => {
@@ -100,8 +89,24 @@ function connectToArduino(portPath) {
 }
 
 ipcMain.on('iniciar-scan', (event) => {
+  if (arduinoPort && arduinoPort.isOpen) arduinoPort.write("SCAN\n");
+});
+
+ipcMain.on('cancelar-operacao', (event) => {
   if (arduinoPort && arduinoPort.isOpen) {
-    arduinoPort.write("SCAN\n");
+    arduinoPort.write("CANCEL\n");
+    console.log('Comando CANCEL enviado ao Arduino');
+  }
+});
+
+ipcMain.on('resetar-porta', (event) => {
+  if (arduinoPort && arduinoPort.isOpen) {
+    console.log('Watchdog: Resetando porta serial por inatividade...');
+    arduinoPort.close(() => {
+      // O intervalo de 5s no main.js já chamará listPorts() automaticamente,
+      // mas vamos forçar aqui para ser mais rápido.
+      setTimeout(() => listPorts(), 1000);
+    });
   }
 });
 
@@ -112,10 +117,6 @@ ipcMain.on('gravar-tag', (event, texto) => {
   } else {
     sendStatus('DESCONECTADO');
   }
-});
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
 });
 
 app.on('window-all-closed', () => {
