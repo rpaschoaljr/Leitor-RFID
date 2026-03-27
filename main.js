@@ -71,7 +71,7 @@ function connectToArduino(portPath) {
 
   arduinoPort = new SerialPort({
     path: portPath,
-    baudRate: 115200, // Aumentado para melhor performance
+    baudRate: 115200, 
     autoOpen: true
   });
 

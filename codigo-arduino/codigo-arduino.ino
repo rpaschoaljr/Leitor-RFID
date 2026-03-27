@@ -27,8 +27,6 @@ const byte BLOCO_INICIAL = 0;
 unsigned long lastActionTime = 0;
 const int COOLDOWN_MS = 1000;
 
-String inputBuffer = "";
-
 void setup() {
   Serial.begin(115200);
   SPI.begin();
@@ -43,39 +41,45 @@ bool ehBlocoUtil(byte b) {
   return true;
 }
 
+// FUNÇÃO DE AUTENTICAÇÃO CENTRALIZADA
+bool prepararBloco(byte bloco) {
+  // Para MIFARE Classic, precisamos autenticar o setor. 
+  // A biblioteca gerencia isso se passarmos o bloco.
+  MFRC522::StatusCode status = mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, bloco, &key, &(mfrc522.uid));
+  if (status == MFRC522::STATUS_OK) {
+    return true;
+  }
+  Serial.print("DEBUG:FALHA_AUTH_BLOCO_"); Serial.println(bloco);
+  return false;
+}
+
 void loop() {
-  while (Serial.available() > 0) {
-    char c = Serial.read();
-    if (c == '\n') {
-      inputBuffer.trim();
-      if (inputBuffer.startsWith("GRAVAR:")) {
-        comandoPendente = inputBuffer.substring(7);
-        modoGravacao = true;
-        modoScan = false;
-        lastActionTime = 0;
-        Serial.println("LOG:OPERACAO_GRAVACAO_INICIADA");
-      } else if (inputBuffer == "SCAN") {
-        modoScan = true;
-        modoGravacao = false;
-        lastActionTime = 0;
-        Serial.println("LOG:SCAN_SOLICITADO");
-      }
-      inputBuffer = "";
-    } else {
-      inputBuffer += c;
+  if (Serial.available() > 0) {
+    String input = Serial.readStringUntil('\n');
+    input.trim();
+    if (input.startsWith("GRAVAR:")) {
+      comandoPendente = input.substring(7);
+      modoGravacao = true;
+      modoScan = false;
+      lastActionTime = 0; 
+      Serial.println("LOG:OPERACAO_GRAVACAO_INICIADA");
+    } else if (input == "SCAN") {
+      modoScan = true;
+      modoGravacao = false;
+      lastActionTime = 0;
+      Serial.println("LOG:SCAN_SOLICITADO");
     }
   }
 
   switch (estadoAtual) {
     case ST_IDLE:
+      // Se houver comando pendente, forçamos a busca da tag (Wakeup)
       if (millis() - lastActionTime > COOLDOWN_MS || modoScan || modoGravacao) {
         bool cartaoEncontrado = false;
         
-        // 1. Tenta detecção padrão (REQA)
         if (mfrc522.PICC_IsNewCardPresent()) {
           cartaoEncontrado = true;
         } 
-        // 2. Se falhou mas o usuário pediu algo, tenta Wakeup (WUPA) para tags já presentes
         else if (modoScan || modoGravacao) {
           byte bufferATQA[2];
           byte bufferSize = sizeof(bufferATQA);
@@ -130,8 +134,8 @@ void loop() {
 
     case ST_READING_BLOCKS:
       {
-        byte limiteLeitura = (blocoMaxScan < 20) ? blocoMaxScan : 20;
-        if (blocoAtual > limiteLeitura) { 
+        // Removi o limite de 20 para ler a tag toda conforme solicitado
+        if (blocoAtual > blocoMaxScan) { 
           Serial.print("DATA:"); Serial.println(dadosLidosBuffer);
           estadoAtual = ST_FINISHING;
         } else {
@@ -164,7 +168,7 @@ void loop() {
           comandoPendente = "";
           modoGravacao = false;
           
-          // Prepara para re-ler o conteúdo e atualizar o resumo na interface
+          // Re-lê para atualizar interface
           blocoAtual = BLOCO_INICIAL;
           dadosLidosBuffer = "";
           estadoAtual = ST_READING_BLOCKS; 
@@ -180,21 +184,14 @@ void loop() {
       mfrc522.PCD_StopCrypto1();
       lastActionTime = millis();
       estadoAtual = ST_IDLE;
-      blocoAtual = 0; // Reset para o próximo ciclo
+      blocoAtual = 0;
       break;
   }
 }
 
 void executarScanBloco() {
-  static byte setorAtual = 255;
-  byte novoSetor = blocoAtual / 4;
-  if (novoSetor != setorAtual) {
-    if (mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, blocoAtual, &key, &(mfrc522.uid)) != MFRC522::STATUS_OK) {
-      Serial.print("BLOCK:"); Serial.print(blocoAtual); Serial.println(":ERRO_AUTH");
-      return;
-    }
-    setorAtual = novoSetor;
-  }
+  if (!prepararBloco(blocoAtual)) return;
+
   byte buffer[18]; byte size = sizeof(buffer);
   if (mfrc522.MIFARE_Read(blocoAtual, buffer, &size) == MFRC522::STATUS_OK) {
     Serial.print("BLOCK:"); Serial.print(blocoAtual); Serial.print(":");
@@ -209,25 +206,25 @@ void executarScanBloco() {
 }
 
 void processarLeituraBloco() {
+  if (!prepararBloco(blocoAtual)) return;
+
   byte buffer[18]; byte size = sizeof(buffer);
-  if (mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, blocoAtual, &key, &(mfrc522.uid)) == MFRC522::STATUS_OK) {
-    if (mfrc522.MIFARE_Read(blocoAtual, buffer, &size) == MFRC522::STATUS_OK) {
-      for (byte i = 0; i < 16; i++) if (buffer[i] >= 32 && buffer[i] <= 126) dadosLidosBuffer += (char)buffer[i];
-    }
+  if (mfrc522.MIFARE_Read(blocoAtual, buffer, &size) == MFRC522::STATUS_OK) {
+    for (byte i = 0; i < 16; i++) if (buffer[i] >= 32 && buffer[i] <= 126) dadosLidosBuffer += (char)buffer[i];
   }
 }
 
 void processarEscritaBloco() {
-  if (mfrc522.PCD_Authenticate(MFRC522::PICC_CMD_MF_AUTH_KEY_A, blocoAtual, &key, &(mfrc522.uid)) == MFRC522::STATUS_OK) {
-    byte dataBlock[16] = {0}; 
-    int progresso = 0;
-    for(int b = 1; b < blocoAtual; b++) if(ehBlocoUtil(b)) progresso += 16;
+  if (!prepararBloco(blocoAtual)) return;
 
-    if (progresso < (int)comandoPendente.length()) {
-      for (byte i = 0; i < 16; i++) {
-        if (progresso + i < (int)comandoPendente.length()) dataBlock[i] = (byte)comandoPendente[progresso + i];
-      }
+  byte dataBlock[16] = {0}; 
+  int progresso = 0;
+  for(int b = 1; b < blocoAtual; b++) if(ehBlocoUtil(b)) progresso += 16;
+
+  if (progresso < (int)comandoPendente.length()) {
+    for (byte i = 0; i < 16; i++) {
+      if (progresso + i < (int)comandoPendente.length()) dataBlock[i] = (byte)comandoPendente[progresso + i];
     }
-    mfrc522.MIFARE_Write(blocoAtual, dataBlock, 16);
   }
+  mfrc522.MIFARE_Write(blocoAtual, dataBlock, 16);
 }
